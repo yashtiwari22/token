@@ -4,6 +4,7 @@
     "hardhat": "^2.17.2"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^4.9.3"
+    "@openzeppelin/contracts": "^4.9.3",
+    "@uniswap/v2-periphery": "^1.1.0-beta.0"
   }
 }
