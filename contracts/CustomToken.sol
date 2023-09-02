@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+
 pragma solidity ^0.8.9;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -11,8 +12,8 @@ contract CustomToken is ERC20, Ownable, Pausable {
     using SafeMath for uint256;
 
     address public _owner;
-    uint256 public minTransactionAmount = 100 * (10 ** decimals()); // Minimum transaction amount
-    uint256 public maxTransactionAmount = 10000 * (10 ** decimals()); // Maximum transaction amount
+    uint256 public minTransactionAmount; // Minimum transaction amount
+    uint256 public maxTransactionAmount; // Maximum transaction amount
     uint256 public transferDelay; // Transfer delay period
     IUniswapV2Router02 public uniswapRouter;
     address public liquidityPair;
@@ -39,19 +40,25 @@ contract CustomToken is ERC20, Ownable, Pausable {
         uint8 _decimals,
         uint256 _initialSupply,
         address _uniswapRouter,
-        address _liquidityPair,
-        address[] memory _initialSigners,
-        uint256 _requiredSignatures
-    ) ERC20(_name, _symbol) {
+        address _liquidityPair
+    )
+        // address[] memory _initialSigners,
+        // uint256 _requiredSignatures
+        ERC20(_name, _symbol)
+    {
         _owner = msg.sender;
-        _mint(msg.sender, _initialSupply * (10 ** uint256(_decimals)));
+        _mint(_owner, _initialSupply * (10 ** uint256(_decimals)));
+        isBlacklisted[msg.sender] = false;
+        _whitelistedWallets[msg.sender] = true;
+        _transferAllowedAt[msg.sender] = block.timestamp;
+        _frozenWallets[msg.sender] = false;
         uniswapRouter = IUniswapV2Router02(_uniswapRouter);
         liquidityPair = _liquidityPair;
-        for (uint256 i = 0; i < _initialSigners.length; i++) {
-            signers[_initialSigners[i]] = true;
-        }
+        // for (uint256 i = 0; i < _initialSigners.length; i++) {
+        //     signers[_initialSigners[i]] = true;
+        // }
 
-        requiredSignatures = _requiredSignatures;
+        // requiredSignatures = _requiredSignatures;
     }
 
     modifier onlySigner() {
@@ -65,8 +72,7 @@ contract CustomToken is ERC20, Ownable, Pausable {
 
     function transferOwnership(address newOwner) public override onlyOwner {
         require(newOwner != address(0), "New owner cannot be zero address");
-        _owner = newOwner;
-        emit OwnershipTransferred(_owner, newOwner);
+        _transferOwnership(newOwner);
     }
 
     function burn(uint256 amount) public onlyOwner {
@@ -83,6 +89,10 @@ contract CustomToken is ERC20, Ownable, Pausable {
         isBlacklisted[_user] = false;
     }
 
+    function isBlackList(address _user) external view returns (bool) {
+        return isBlacklisted[_user];
+    }
+
     function setMinTransactionAmount(uint256 amount) external onlyOwner {
         minTransactionAmount = amount;
     }
@@ -93,28 +103,6 @@ contract CustomToken is ERC20, Ownable, Pausable {
 
     function setTransferDelay(uint256 delay) external onlyOwner {
         transferDelay = delay;
-    }
-
-    function beforeTokenTransfer(
-        address from,
-        address to,
-        uint256 amount
-    ) public view {
-        _beforeTokenTransfer(from, to, amount);
-    }
-
-    function _beforeTokenTransfer(
-        address from,
-        address to,
-        uint256 amount
-    ) internal view override {
-        if (from != address(0) && to != address(0)) {
-            require(
-                amount <= maxTransactionAmount,
-                "Transfer amount exceeds max limit"
-            );
-        }
-        _beforeTokenTransfer(from, to, amount);
     }
 
     function pause() external onlyOwner {
@@ -133,12 +121,20 @@ contract CustomToken is ERC20, Ownable, Pausable {
         _frozenWallets[wallet] = false;
     }
 
+    function isFrozen(address wallet) external view returns (bool) {
+        return _frozenWallets[wallet];
+    }
+
     function addToWhitelist(address wallet) external onlyOwner {
         _whitelistedWallets[wallet] = true;
     }
 
     function removeFromWhitelist(address wallet) external onlyOwner {
         _whitelistedWallets[wallet] = false;
+    }
+
+    function transferAllowedAt() external view returns (uint256) {
+        return _transferAllowedAt[msg.sender];
     }
 
     function transfer(
@@ -191,28 +187,28 @@ contract CustomToken is ERC20, Ownable, Pausable {
         _mint(address(this), amount);
     }
 
-    // Auto liquidity mechanism
-    function _autoLiquidity(uint256 amount) internal {
-        require(liquidityPair != address(0), "Liquidity pair address not set");
+    // // Auto liquidity mechanism
+    // function _autoLiquidity(uint256 amount) internal {
+    //     require(liquidityPair != address(0), "Liquidity pair address not set");
 
-        // Split the amount for recipient and liquidity
-        uint256 liquidityAmount = amount.div(2);
-        uint256 recipientAmount = amount.sub(liquidityAmount);
+    //     // Split the amount for recipient and liquidity
+    //     uint256 liquidityAmount = amount.div(2);
+    //     uint256 recipientAmount = amount.sub(liquidityAmount);
 
-        // Approve the Uniswap router to spend the token
-        _approve(address(this), address(uniswapRouter), liquidityAmount);
+    //     // Approve the Uniswap router to spend the token
+    //     _approve(address(this), address(uniswapRouter), liquidityAmount);
 
-        // Add liquidity to Uniswap
-        uniswapRouter.addLiquidityETH{value: address(this).balance}(
-            address(this),
-            liquidityAmount,
-            0,
-            0,
-            owner(),
-            block.timestamp + 3600
-        );
+    //     // Add liquidity to Uniswap
+    //     uniswapRouter.addLiquidityETH{value: address(this).balance}(
+    //         address(this),
+    //         liquidityAmount,
+    //         0,
+    //         0,
+    //         owner(),
+    //         block.timestamp + 3600
+    //     );
 
-        // Transfer the remaining tokens to the recipient
-        _transfer(address(this), msg.sender, recipientAmount);
-    }
+    //     // Transfer the remaining tokens to the recipient
+    //     _transfer(address(this), msg.sender, recipientAmount);
+    // }
 }
