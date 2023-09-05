@@ -7,9 +7,10 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
-import "./IPancakeswapV2Factory.sol";
-import "./IPancakeswapV2Pair.sol";
-import "./IPancakeswapV2Router02.sol";
+
+// import "./IPancakeswapV2Factory.sol";
+// import "./IPancakeswapV2Pair.sol";
+// import "./IPancakeswapV2Router02.sol";
 
 contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     using SafeMath for uint256;
@@ -28,26 +29,36 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     // Address to collect USDC tokens for liquidity
     address public usdcLiquidityAddress;
 
-    // // PancakeSwap router address
-    IPancakeswapV2Router02 public immutable pancakeswapV2Router;
-    address public immutable pancakeswapV2Pair;
+    uint256 public burnableTax; // Fixed tax for burning
+    uint256 public graduallyDecreasingTax; // Gradually decreasing tax rate
+    uint256 public decreasingTaxRate; // Rate at which gradually decreasing tax decreases
+    uint256 public decreasingTaxInterval; // Time period after which gradually decreasing tax decreases
+    uint256 public lastUpdatedTaxTimestamp; // Timestamp of the last tax update
 
-    // Flag to enable/disable auto liquidity
-    bool public autoLiquidityEnabled = true;
+    // // // PancakeSwap router address
+    // IPancakeswapV2Router02 public immutable pancakeswapV2Router;
+    // address public immutable pancakeswapV2Pair;
 
-    // Whitelist to exclude addresses from sale tax
-    mapping(address => bool) public isExcludedFromTax;
+    // // Flag to enable/disable auto liquidity
+    // bool public autoLiquidityEnabled = true;
 
-    // Tax rates for different transaction limits
-    uint256 public lowLimitTaxRate = 5; // 5% tax for transactions below low limit
-    uint256 public highLimitTaxRate = 10; // 10% tax for transactions above low limit
+    // // Whitelist to exclude addresses from sale tax
+    // mapping(address => bool) public isExcludedFromTax;
 
-    // Limits for different tax rates
-    uint256 public lowLimit = 1000 ether;
-    uint256 public highLimit = 5000 ether;
+    // // Tax rates for different transaction limits
+    // uint256 public lowLimitTaxRate = 5; // 5% tax for transactions below low limit
+    // uint256 public highLimitTaxRate = 10; // 10% tax for transactions above low limit
+
+    // // Limits for different tax rates
+    // uint256 public lowLimit = 1000 ether;
+    // uint256 public highLimit = 5000 ether;
 
     struct VestingInfo {
         uint256 amount; // Total amount of tokens to vest
+        address beneficiary; // Wallet address to receive tokens
+        uint256 percentageOfTokensToBeReleased; // Percentage of tokens to release at each interval
+        uint256 timeInterval; // Interval in seconds for releasing tokens
+        uint256 lastWithdrawTimestamp; // Timestamp of the last token withdrawal
         uint256 vestingDuration; // Vesting duration in seconds
         uint256 startTime; // Vesting start time (timestamp)
     }
@@ -65,7 +76,11 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
         uint8 _decimals,
         uint256 _initialSupply,
         address[] memory _initialSigners,
-        uint256 _deflationRate
+        uint256 _deflationRate,
+        uint256 _initialBurnableTax,
+        uint256 _initialGraduallyDecreasingTax,
+        uint256 _initialDecreasingTaxRate,
+        uint256 _initialDecreasingTaxInterval
     )
         // address _usdcLiquidityAddress
         ERC20(_name, _symbol)
@@ -77,16 +92,21 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
         _transferAllowedAt[msg.sender] = block.timestamp;
         _frozenWallets[msg.sender] = false;
         deflationRate = _deflationRate;
+        burnableTax = _initialBurnableTax;
+        graduallyDecreasingTax = _initialGraduallyDecreasingTax;
+        decreasingTaxRate = _initialDecreasingTaxRate;
+        decreasingTaxInterval = _initialDecreasingTaxInterval;
+        lastUpdatedTaxTimestamp = block.timestamp;
         // usdcLiquidityAddress = _usdcLiquidityAddress;
-        IPancakeswapV2Router02 _pancakeswapV2Router = IPancakeswapV2Router02(
-            0x10ED43C718714eb63d5aA57B78B54704E256024E
-        );
-        pancakeswapV2Pair = IPancakeswapV2Factory(
-            _pancakeswapV2Router.factory()
-        ).createPair(address(this), _pancakeswapV2Router.WETH());
+        // IPancakeswapV2Router02 _pancakeswapV2Router = IPancakeswapV2Router02(
+        //     0x10ED43C718714eb63d5aA57B78B54704E256024E
+        // );
+        // pancakeswapV2Pair = IPancakeswapV2Factory(
+        //     _pancakeswapV2Router.factory()
+        // ).createPair(address(this), _pancakeswapV2Router.WETH());
 
-        // set the rest of the contract variables
-        pancakeswapV2Router = _pancakeswapV2Router;
+        // // set the rest of the contract variables
+        // pancakeswapV2Router = _pancakeswapV2Router;
 
         for (uint256 i = 0; i < _initialSigners.length; i++) {
             signers[_initialSigners[i]] = true;
@@ -106,15 +126,6 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     function mint(address account, uint256 amount) public onlyOwner {
         _mint(account, amount);
     }
-
-    // function transferOwnership(address newOwner) public override onlyOwner {
-    //     require(newOwner != address(0), "New owner cannot be zero address");
-    //     _transferOwnership(newOwner);
-    // }
-
-    // function burn(uint256 amount) public override onlyOwner {
-    //     _burn(msg.sender, amount);
-    // }
 
     function blackList(address _user) public onlyOwner {
         require(!isBlacklisted[_user], "user already blacklisted");
@@ -185,6 +196,10 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
         deflationRate = _rate;
     }
 
+    function isWhitelisted(address user) public view returns (bool) {
+        return _whitelistedWallets[user];
+    }
+
     // // Function to set the USDC liquidity address
     // function setUsdcLiquidityAddress(
     //     address _usdcLiquidityAddress
@@ -192,23 +207,23 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     //     usdcLiquidityAddress = _usdcLiquidityAddress;
     // }
 
-    // Function to enable/disable auto liquidity
-    function toggleAutoLiquidity() external onlyOwner {
-        autoLiquidityEnabled = !autoLiquidityEnabled;
-    }
+    // // Function to enable/disable auto liquidity
+    // function toggleAutoLiquidity() external onlyOwner {
+    //     autoLiquidityEnabled = !autoLiquidityEnabled;
+    // }
 
-    // Function to set the tax rates and limits
-    function setTaxRatesAndLimits(
-        uint256 _lowLimitTaxRate,
-        uint256 _highLimitTaxRate,
-        uint256 _lowLimit,
-        uint256 _highLimit
-    ) external onlyOwner {
-        lowLimitTaxRate = _lowLimitTaxRate;
-        highLimitTaxRate = _highLimitTaxRate;
-        lowLimit = _lowLimit;
-        highLimit = _highLimit;
-    }
+    // // Function to set the tax rates and limits
+    // function setTaxRatesAndLimits(
+    //     uint256 _lowLimitTaxRate,
+    //     uint256 _highLimitTaxRate,
+    //     uint256 _lowLimit,
+    //     uint256 _highLimit
+    // ) external onlyOwner {
+    //     lowLimitTaxRate = _lowLimitTaxRate;
+    //     highLimitTaxRate = _highLimitTaxRate;
+    //     lowLimit = _lowLimit;
+    //     highLimit = _highLimit;
+    // }
 
     // // Function to exclude an address from the sale tax
     // function excludeFromTax(address _address) external onlyOwner {
@@ -219,6 +234,22 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     // function includeInTax(address _address) external onlyOwner {
     //     isExcludedFromTax[_address] = false;
     // }
+
+    // Function to update the gradually decreasing tax rate
+    function updateGraduallyDecreasingTax() external {
+        uint256 timeSinceLastUpdate = block.timestamp - lastUpdatedTaxTimestamp;
+        require(
+            timeSinceLastUpdate >= decreasingTaxInterval,
+            "Tax update interval not reached"
+        );
+
+        // Calculate the new tax rate
+        graduallyDecreasingTax =
+            (graduallyDecreasingTax * (100 - decreasingTaxRate)) /
+            100;
+
+        lastUpdatedTaxTimestamp = block.timestamp;
+    }
 
     function transfer(
         address recipient,
@@ -235,7 +266,7 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
         _transferAllowedAt[msg.sender] = block.timestamp + transferDelay;
 
         if (isDeflationary) {
-            uint256 burnAmount = (amount / 100) * 20; // Calculate the amount to burn
+            uint256 burnAmount = (amount / 100) * burnableTax; // Calculate the amount to burn
             _burn(msg.sender, burnAmount); // Burn tokens
 
             uint256 afterBurn = amount - burnAmount;
@@ -332,10 +363,6 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     //     }
     // }
 
-    // function deposit(uint256 amount) external onlyOwner {
-    //     _mint(address(this), amount);
-    // }
-
     // Function to lock liquidity
     function lockLiquidity(
         uint256 amount
@@ -365,7 +392,8 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     function addVesting(
         address wallet,
         uint256 amount,
-        uint256 startTime,
+        uint256 percentageOfTokensToBeReleased,
+        uint256 timeInterval,
         uint256 vestingDuration
     ) external onlyOwner {
         require(!_whitelistedWallets[wallet], "Wallet is already whitelisted");
@@ -374,12 +402,23 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
         // Ensure the vesting parameters are valid
         require(amount > 0, "Invalid vesting amount");
         require(
-            startTime >= block.timestamp,
-            "Vesting start time must be in the future"
+            percentageOfTokensToBeReleased > 0 &&
+                percentageOfTokensToBeReleased <= 100,
+            "Invalid percentage"
+        );
+
+        require(timeInterval > 0, "Invalid time interval");
+        require(
+            timeInterval <= vestingDuration,
+            "Time interval should not exceed vesting duration"
         );
 
         vestingInfo[wallet] = VestingInfo({
             amount: amount,
+            beneficiary: wallet,
+            percentageOfTokensToBeReleased: percentageOfTokensToBeReleased,
+            timeInterval: timeInterval,
+            lastWithdrawTimestamp: block.timestamp,
             vestingDuration: vestingDuration,
             startTime: block.timestamp
         });
@@ -400,9 +439,27 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
         uint256 vestedAmount = calculateVestedAmount(info);
         require(vestedAmount > 0, "No tokens are currently vested");
 
+        // Calculate the amount to release based on the percentage
+        uint256 amountToRelease = (vestedAmount *
+            info.percentageOfTokensToBeReleased) / 100;
+
+        // Calculate the time since the last withdrawal
+        uint256 timeSinceLastWithdraw = block.timestamp -
+            info.lastWithdrawTimestamp;
+
+        // Ensure that the time interval has passed since the last withdrawal
+        require(
+            timeSinceLastWithdraw >= info.timeInterval,
+            "Time interval not reached"
+        );
+
         // Transfer the vested tokens to the wallet
-        _transfer(address(this), msg.sender, vestedAmount);
-        return vestedAmount;
+        _transfer(address(this), info.beneficiary, amountToRelease);
+
+        // Update the last withdrawal timestamp
+        info.lastWithdrawTimestamp = block.timestamp;
+
+        return amountToRelease;
     }
 
     // Function to calculate the currently vested amount for a wallet
