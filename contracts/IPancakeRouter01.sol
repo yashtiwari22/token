@@ -2,7 +2,7 @@
 
 pragma solidity ^0.8.9;
 
-interface IPancakeswapV2Router01 {
+interface IPancakeRouter01 {
     function factory() external pure returns (address);
 
     function WETH() external pure returns (address);

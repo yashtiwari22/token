@@ -2,7 +2,7 @@
 
 pragma solidity ^0.8.9;
 
-interface IPancakeswapV2Factory {
+interface IPancakeFactory {
     event PairCreated(
         address indexed token0,
         address indexed token1,

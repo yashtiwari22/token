@@ -8,9 +8,9 @@ import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 
-// import "./IPancakeswapV2Factory.sol";
-// import "./IPancakeswapV2Pair.sol";
-// import "./IPancakeswapV2Router02.sol";
+import "./IPancakeFactory.sol";
+import "./IPancakePair.sol";
+import "./IPancakeRouter02.sol";
 
 contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     using SafeMath for uint256;
@@ -36,8 +36,8 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     uint256 public lastUpdatedTaxTimestamp; // Timestamp of the last tax update
 
     // // // PancakeSwap router address
-    // IPancakeswapV2Router02 public immutable pancakeswapV2Router;
-    // address public immutable pancakeswapV2Pair;
+    IPancakeRouter02 public pancakeRouter;
+    address public pancakePair;
 
     // // Flag to enable/disable auto liquidity
     // bool public autoLiquidityEnabled = true;
@@ -97,16 +97,17 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
         decreasingTaxRate = _initialDecreasingTaxRate;
         decreasingTaxInterval = _initialDecreasingTaxInterval;
         lastUpdatedTaxTimestamp = block.timestamp;
-        // usdcLiquidityAddress = _usdcLiquidityAddress;
-        // IPancakeswapV2Router02 _pancakeswapV2Router = IPancakeswapV2Router02(
-        //     0x10ED43C718714eb63d5aA57B78B54704E256024E
-        // );
-        // pancakeswapV2Pair = IPancakeswapV2Factory(
-        //     _pancakeswapV2Router.factory()
-        // ).createPair(address(this), _pancakeswapV2Router.WETH());
+        IPancakeRouter02 _pancakeRouter = IPancakeRouter02(
+            0xD99D1c33F9fC3444f8101754aBC46c52416550D1
+        );
 
-        // // set the rest of the contract variables
-        // pancakeswapV2Router = _pancakeswapV2Router;
+        pancakePair = IPancakeFactory(_pancakeRouter.factory()).createPair(
+            address(this),
+            _pancakeRouter.WETH()
+        );
+
+        // set the rest of the contract variables
+        pancakeRouter = _pancakeRouter;
 
         for (uint256 i = 0; i < _initialSigners.length; i++) {
             signers[_initialSigners[i]] = true;
@@ -341,18 +342,18 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     //     }
     // }
 
-    // Function to add liquidity to PancakeSwap
+    // // Function to add liquidity
     // function addLiquidity(uint256 tokenAmount, uint256 bnbAmount) internal {
     //     // Approve the router to spend tokens
-    //     _approve(address(this), address(pancakeswapV2Router), tokenAmount);
+    //     _approve(address(this), address(pancakeRouter), tokenAmount);
 
     //     // Add liquidity to the pool
-    //     pancakeswapV2Router.addLiquidityETH{value: bnbAmount}(
+    //     pancakeRouter.addLiquidityETH{value: bnbAmount}(
     //         address(this), // Your token address
     //         tokenAmount, // Amount of your token
     //         0, // Minimum amount of your token to receive
     //         0, // Minimum amount of BNB to receive
-    //         address(this), // Address to receive LP tokens
+    //         _owner, // Address to receive LP tokens
     //         block.timestamp + 300 // Deadline (5 minutes from now)
     //     );
 
@@ -479,4 +480,6 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
 
         return vestedAmount;
     }
+
+    receive() external payable {}
 }
