@@ -4,14 +4,14 @@ pragma solidity ^0.8.7;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "./CustomToken.sol";
+import "./CGate.sol";
 
 error Staking__TransferFailed();
 error Withdraw__TransferFailed();
 error Staking__NeedsMoreThanZero();
 
 contract Staking is ReentrancyGuard {
-    CustomToken s_stakingToken;
+    CGate s_stakingToken;
     IERC20 public s_rewardToken;
 
     uint256 public REWARD_RATE = 30;
@@ -65,7 +65,7 @@ contract Staking is ReentrancyGuard {
         address rewardToken,
         uint256 planDuration
     ) {
-        s_stakingToken = CustomToken(stakingToken);
+        s_stakingToken = CGate(stakingToken);
         s_rewardToken = IERC20(rewardToken);
         s_planDuration = planDuration;
         s_planExpired = block.timestamp + planDuration;

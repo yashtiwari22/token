@@ -7,7 +7,7 @@ describe("CustomToken", function () {
   let newOwner;
   let vestingStartTime;
 
-  const initialSupply = 10000;
+  const initialSupply = ethers.parseEther("10000");
   const burnAmount = ethers.parseEther("10"); // Amount to burn
   const maxTransferAmount = ethers.parseEther("100");
   const delay = 3600;
@@ -26,13 +26,13 @@ describe("CustomToken", function () {
       "CustomToken",
       "CT",
       18,
-      initialSupply,
-      [owner.address],
-      20
-      // user1.address
+      initialSupply
     );
 
     await customToken.waitForDeployment();
+
+    const balance = await customToken.balanceOf(owner.address);
+    console.log(balance);
 
     // Set the maximum transfer amount
     await customToken.setMaxTransferAmount(maxTransferAmount);
@@ -235,48 +235,52 @@ describe("CustomToken", function () {
   //   });
   // });
   describe("vesting", function () {
-    it("should allow the user to claim vested tokens after vesting period", async function () {
-      await customToken
-        .connect(owner)
-        .addVesting(
-          newOwner.address,
-          vestingAmount,
-          vestingPercentage,
-          timeInterval,
-          vestingDuration
-        );
+    it("should add a vesting schedule", async function () {
+      const amount = ethers.parseEther("100"); // 100 tokens
+      const percentageToRelease = 50; // 50%
+      const timeInterval = 86400; // 1 day in seconds
 
-      // Fast-forward to the vesting period
-      await ethers.provider.send("evm_increaseTime", [vestingDuration + 1]);
-      await ethers.provider.send("evm_mine");
+      await customToken.addVestingSchedule(
+        newOwner.address,
+        amount,
+        percentageToRelease,
+        timeInterval
+      );
 
-      // Claim vested tokens
-      const tx = await customToken.connect(newOwner).claimVestedTokens();
-      await tx.wait();
+      // Check if the vesting schedule has been added correctly
+      const vestingInfo = await customToken.getVestingInfo(newOwner.address);
+      expect(vestingInfo.amount).to.equal(amount);
+      expect(vestingInfo.percentageOfTokensToBeReleased).to.equal(
+        percentageToRelease
+      );
+      expect(vestingInfo.timeInterval).to.equal(timeInterval);
+    });
+    it("should allow beneficiary to claim tokens", async function () {
+      const amount = ethers.parseEther("100"); // 100 tokens
+      const percentageToRelease = 50; // 50%
+      const timeInterval = 86400; // 1 day in seconds
 
-      // Ensure that the claimed amount matches the expected amount
-      const balance = await customToken.balanceOf(beneficiary.address);
-      const expectedClaimedAmount = vestingAmount
-        .mul(vestingPercentage)
-        .div(100);
-      expect(balance).to.equal(
-        expectedClaimedAmount,
-        "Incorrect claimed amount"
+      await customToken.addVestingSchedule(
+        newOwner.address,
+        amount,
+        percentageToRelease,
+        timeInterval
+      );
+      // Increase the timestamp to simulate the passage of time
+      await ethers.provider.send("evm_increaseTime", [86401]); // 1 day + 1 second
+      await ethers.provider.send("evm_mine"); // Mine a new block
+
+      await customToken.connect(newOwner).claim();
+
+      // Check if tokens have been claimed correctly
+      const balance = await customToken.balanceOf(owner.address);
+      console.log(balance);
+
+      const beneficiaryBalance = await customToken.balanceOf(newOwner.address);
+      expect(BigInt(beneficiaryBalance)).to.equal(
+        (BigInt(amount) * BigInt(percentageToRelease)) / BigInt(100)
       );
     });
-
-    //   it("should not allow the user to claim vested tokens if no vesting exists", async function () {
-    //     // Create a new user with no vesting
-
-    //     const amount = ethers.parseEther("100000");
-
-    //     // User attempts to claim vested tokens
-    //     await customToken.mint(customToken.target, amount);
-
-    //     await expect(
-    //       customToken.connect(owner).claimVestedTokens()
-    //     ).to.be.revertedWith("No vesting found for the wallet");
-    //   });
   });
   // describe("deflationary mechanims", function () {
   //   it("Should allow the owner to enable/disable deflationary mechanism", async function () {

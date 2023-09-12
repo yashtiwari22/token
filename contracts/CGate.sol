@@ -12,7 +12,7 @@ import "./IPancakeFactory.sol";
 import "./IPancakePair.sol";
 import "./IPancakeRouter02.sol";
 
-contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
+contract CGate is ERC20, ERC20Burnable, Ownable, Pausable {
     using SafeMath for uint256;
 
     address public _owner;
@@ -35,9 +35,9 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     uint256 public decreasingTaxInterval; // Time period after which gradually decreasing tax decreases
     uint256 public lastUpdatedTaxTimestamp; // Timestamp of the last tax update
 
-    // // // PancakeSwap router address
-    IPancakeRouter02 public pancakeRouter;
-    address public pancakePair;
+    // // // // PancakeSwap router address
+    // IPancakeRouter02 public pancakeRouter;
+    // address public pancakePair;
 
     // // Flag to enable/disable auto liquidity
     // bool public autoLiquidityEnabled = true;
@@ -53,35 +53,29 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     // uint256 public lowLimit = 1000 ether;
     // uint256 public highLimit = 5000 ether;
 
-    struct VestingInfo {
-        uint256 amount; // Total amount of tokens to vest
-        address beneficiary; // Wallet address to receive tokens
-        uint256 percentageOfTokensToBeReleased; // Percentage of tokens to release at each interval
-        uint256 timeInterval; // Interval in seconds for releasing tokens
-        uint256 lastWithdrawTimestamp; // Timestamp of the last token withdrawal
-        uint256 vestingDuration; // Vesting duration in seconds
-        uint256 startTime; // Vesting start time (timestamp)
+    struct Vesting {
+        uint256 amount;
+        address beneficiary;
+        uint256 percentageOfTokensToBeReleased;
+        uint256 timeInterval;
+        uint256 lastWithdrawTimestamp;
+        uint256 claimedTokens;
     }
 
     mapping(address => bool) private isBlacklisted;
     mapping(address => uint256) private _transferAllowedAt;
-    mapping(address => bool) private _frozenWallets;
+    mapping(address => uint256) private _frozenWallets;
     mapping(address => bool) private _whitelistedWallets;
     mapping(address => bool) public signers;
-    mapping(address => VestingInfo) private vestingInfo;
+    mapping(address => Vesting) private vestingInfo;
 
     constructor(
         string memory _name,
         string memory _symbol,
         uint8 _decimals,
-        uint256 _initialSupply,
-        address[] memory _initialSigners,
-        uint256 _deflationRate,
-        uint256 _initialBurnableTax,
-        uint256 _initialGraduallyDecreasingTax,
-        uint256 _initialDecreasingTaxRate,
-        uint256 _initialDecreasingTaxInterval
+        uint256 _initialSupply
     )
+        // address[] memory _initialSigners,
         // address _usdcLiquidityAddress
         ERC20(_name, _symbol)
     {
@@ -90,37 +84,40 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
         isBlacklisted[msg.sender] = false;
         _whitelistedWallets[msg.sender] = true;
         _transferAllowedAt[msg.sender] = block.timestamp;
-        _frozenWallets[msg.sender] = false;
-        deflationRate = _deflationRate;
-        burnableTax = _initialBurnableTax;
-        graduallyDecreasingTax = _initialGraduallyDecreasingTax;
-        decreasingTaxRate = _initialDecreasingTaxRate;
-        decreasingTaxInterval = _initialDecreasingTaxInterval;
         lastUpdatedTaxTimestamp = block.timestamp;
-        IPancakeRouter02 _pancakeRouter = IPancakeRouter02(
-            0xD99D1c33F9fC3444f8101754aBC46c52416550D1
-        );
+        // IPancakeRouter02 _pancakeRouter = IPancakeRouter02(
+        //     0xD99D1c33F9fC3444f8101754aBC46c52416550D1
+        // );
 
-        pancakePair = IPancakeFactory(_pancakeRouter.factory()).createPair(
-            address(this),
-            _pancakeRouter.WETH()
-        );
+        // pancakePair = IPancakeFactory(_pancakeRouter.factory()).createPair(
+        //     address(this),
+        //     _pancakeRouter.WETH()
+        // );
 
-        // set the rest of the contract variables
-        pancakeRouter = _pancakeRouter;
+        // // set the rest of the contract variables
+        // pancakeRouter = _pancakeRouter;
 
-        for (uint256 i = 0; i < _initialSigners.length; i++) {
-            signers[_initialSigners[i]] = true;
-        }
+        // for (uint256 i = 0; i < _initialSigners.length; i++) {
+        //     signers[_initialSigners[i]] = true;
+        // }
     }
 
-    modifier onlySigner() {
-        require(signers[msg.sender], "Sender is not a signer");
-        _;
-    }
+    // modifier onlySigner() {
+    //     require(signers[msg.sender], "Sender is not a signer");
+    //     _;
+    // }
     // Modifier to check if liquidity is locked
     modifier liquidityNotLocked() {
         require(!liquidityLocked, "Liquidity is locked");
+        _;
+    }
+
+    modifier whenNotFrozen(address wallet) {
+        require(
+            _frozenWallets[wallet] == 0 ||
+                block.timestamp > _frozenWallets[wallet],
+            "Wallet is frozen"
+        );
         _;
     }
 
@@ -162,16 +159,16 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
         _unpause();
     }
 
-    function freezeWallet(address wallet) external onlyOwner {
-        _frozenWallets[wallet] = true;
+    function freezeWallet(
+        address wallet,
+        uint256 freezeDuration
+    ) external onlyOwner {
+        require(wallet != address(0), "Invalid wallet address");
+        _frozenWallets[wallet] = block.timestamp + freezeDuration;
     }
 
     function unfreezeWallet(address wallet) external onlyOwner {
-        _frozenWallets[wallet] = false;
-    }
-
-    function isFrozen(address wallet) external view returns (bool) {
-        return _frozenWallets[wallet];
+        _frozenWallets[wallet] = 0;
     }
 
     function addToWhitelist(address wallet) external onlyOwner {
@@ -199,6 +196,10 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
 
     function isWhitelisted(address user) public view returns (bool) {
         return _whitelistedWallets[user];
+    }
+
+    function getVestingInfo(address user) public view returns (Vesting memory) {
+        return vestingInfo[user];
     }
 
     // // Function to set the USDC liquidity address
@@ -236,6 +237,10 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     //     isExcludedFromTax[_address] = false;
     // }
 
+    function setDecreasingTaxRate(uint256 _rate) public {
+        decreasingTaxRate = _rate;
+    }
+
     // Function to update the gradually decreasing tax rate
     function updateGraduallyDecreasingTax() external {
         uint256 timeSinceLastUpdate = block.timestamp - lastUpdatedTaxTimestamp;
@@ -255,9 +260,15 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     function transfer(
         address recipient,
         uint256 amount
-    ) public virtual override whenNotPaused returns (bool) {
-        require(isBlacklisted[msg.sender], "Sender's wallet is blacklisted");
-        require(!_frozenWallets[msg.sender], "Sender's wallet is frozen");
+    )
+        public
+        virtual
+        override
+        whenNotPaused
+        whenNotFrozen(msg.sender)
+        returns (bool)
+    {
+        require(!isBlacklisted[msg.sender], "Sender's wallet is blacklisted");
         require(amount >= minTransactionAmount, "Amount below minimum");
         require(amount <= maxTransactionAmount, "Amount exceeds maximum");
         require(
@@ -282,9 +293,8 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
         address from,
         address to,
         uint256 amount
-    ) public override returns (bool) {
+    ) public override whenNotFrozen(from) returns (bool) {
         require(isBlacklisted[msg.sender], "Sender's wallet is blacklisted");
-        require(!_frozenWallets[msg.sender], "Sender's wallet is frozen");
         require(amount >= minTransactionAmount, "Amount below minimum");
         require(amount <= maxTransactionAmount, "Amount exceeds maximum");
         require(
@@ -365,9 +375,7 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     // }
 
     // Function to lock liquidity
-    function lockLiquidity(
-        uint256 amount
-    ) external onlySigner liquidityNotLocked {
+    function lockLiquidity(uint256 amount) external liquidityNotLocked {
         require(amount <= balanceOf(address(this)), "Insufficient balance");
 
         // Transfer the liquidity tokens to the contract itself
@@ -378,7 +386,7 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     }
 
     // Function to unlock locked liquidity
-    function unlockLiquidity(uint256 amount) external onlySigner {
+    function unlockLiquidity(uint256 amount) external {
         require(liquidityLocked, "Liquidity is not locked");
         require(lockedLiquidityAmount >= amount, "Not enough locked liquidity");
 
@@ -390,96 +398,60 @@ contract CustomToken is ERC20, ERC20Burnable, Ownable, Pausable {
     }
 
     // Function to add vesting for a wallet
-    function addVesting(
-        address wallet,
+    function addVestingSchedule(
+        address beneficiary,
         uint256 amount,
-        uint256 percentageOfTokensToBeReleased,
-        uint256 timeInterval,
-        uint256 vestingDuration
+        uint256 percentageToRelease,
+        uint256 timeInterval
     ) external onlyOwner {
-        require(!_whitelistedWallets[wallet], "Wallet is already whitelisted");
-        require(vestingInfo[wallet].amount == 0, "Wallet already has vesting");
-
-        // Ensure the vesting parameters are valid
-        require(amount > 0, "Invalid vesting amount");
         require(
-            percentageOfTokensToBeReleased > 0 &&
-                percentageOfTokensToBeReleased <= 100,
-            "Invalid percentage"
+            beneficiary != address(0),
+            "Beneficiary address cannot be zero"
         );
-
-        require(timeInterval > 0, "Invalid time interval");
         require(
-            timeInterval <= vestingDuration,
-            "Time interval should not exceed vesting duration"
+            percentageToRelease > 0 && percentageToRelease <= 100,
+            "Percentage must be between 1 and 100"
         );
+        require(timeInterval > 0, "Time interval must be greater than zero");
 
-        vestingInfo[wallet] = VestingInfo({
-            amount: amount,
-            beneficiary: wallet,
-            percentageOfTokensToBeReleased: percentageOfTokensToBeReleased,
-            timeInterval: timeInterval,
-            lastWithdrawTimestamp: block.timestamp,
-            vestingDuration: vestingDuration,
-            startTime: block.timestamp
-        });
-
-        _whitelistedWallets[wallet] = true;
+        Vesting storage vesting = vestingInfo[beneficiary];
+        vesting.amount = amount;
+        vesting.beneficiary = beneficiary;
+        vesting.percentageOfTokensToBeReleased = percentageToRelease;
+        vesting.timeInterval = timeInterval;
+        vesting.lastWithdrawTimestamp = block.timestamp;
+        vesting.claimedTokens = 0;
     }
 
-    // Function to claim vested tokens for a wallet
-    function claimVestedTokens() external returns (uint256) {
-        VestingInfo storage info = vestingInfo[msg.sender];
+    function claim() external {
+        Vesting storage vesting = vestingInfo[msg.sender];
+        require(vesting.amount > 0, "No vesting schedule found for the sender");
 
-        require(info.amount > 0, "No vesting found for the wallet");
+        uint256 currentTime = block.timestamp;
+        uint256 elapsedTime = currentTime - vesting.lastWithdrawTimestamp;
+        uint256 totalVested = vesting.amount;
+
         require(
-            block.timestamp >= info.startTime,
-            "Vesting has not started yet"
+            elapsedTime >= vesting.timeInterval,
+            "Tokens cannot be claimed yet"
         );
 
-        uint256 vestedAmount = calculateVestedAmount(info);
-        require(vestedAmount > 0, "No tokens are currently vested");
+        // Calculate the tokens to release in this claim
+        uint256 tokensToRelease = (totalVested *
+            vesting.percentageOfTokensToBeReleased) / 100;
+        vesting.claimedTokens += tokensToRelease;
+        vesting.lastWithdrawTimestamp = currentTime;
 
-        // Calculate the amount to release based on the percentage
-        uint256 amountToRelease = (vestedAmount *
-            info.percentageOfTokensToBeReleased) / 100;
-
-        // Calculate the time since the last withdrawal
-        uint256 timeSinceLastWithdraw = block.timestamp -
-            info.lastWithdrawTimestamp;
-
-        // Ensure that the time interval has passed since the last withdrawal
         require(
-            timeSinceLastWithdraw >= info.timeInterval,
-            "Time interval not reached"
+            tokensToRelease <= totalVested,
+            "Tokens to claim exceed total vested tokens"
+        );
+        require(
+            vesting.claimedTokens <= vesting.amount,
+            "Not enough tokens in the vesting schedule"
         );
 
-        // Transfer the vested tokens to the wallet
-        _transfer(address(this), info.beneficiary, amountToRelease);
-
-        // Update the last withdrawal timestamp
-        info.lastWithdrawTimestamp = block.timestamp;
-
-        return amountToRelease;
+        // Transfer the tokens to the beneficiary
+        _transfer(_owner, msg.sender, tokensToRelease);
     }
-
-    // Function to calculate the currently vested amount for a wallet
-    function calculateVestedAmount(
-        VestingInfo storage info
-    ) internal view returns (uint256) {
-        if (block.timestamp >= info.startTime.add(info.vestingDuration)) {
-            return info.amount; // All tokens are vested
-        }
-
-        // Calculate the vested amount linearly
-        uint256 elapsedTime = block.timestamp.sub(info.startTime);
-        uint256 vestedPercentage = elapsedTime.mul(1e18).div(
-            info.vestingDuration
-        );
-        uint256 vestedAmount = info.amount.mul(vestedPercentage).div(1e18);
-
-        return vestedAmount;
-    }
-
-    receive() external payable {}
 }
