@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.9;
-
+pragma solidity ^0.8.19;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
@@ -26,33 +25,19 @@ contract CGate is ERC20, ERC20Burnable, Ownable, Pausable {
     bool public isDeflationary = false; // Deflationary state flag
     uint256 public deflationRate; // 1000 means 10% deflation rate
 
-    // Address to collect USDC tokens for liquidity
-    address public usdcLiquidityAddress;
+    bool public autoLiquidityEnabled = true;
+    mapping(address => bool) public isExcludedFromTax;
 
     uint256 public burnableTax; // Fixed tax for burning
     uint256 public graduallyDecreasingTax; // Gradually decreasing tax rate
+    uint256 public liquidityTax;
     uint256 public decreasingTaxRate; // Rate at which gradually decreasing tax decreases
     uint256 public decreasingTaxInterval; // Time period after which gradually decreasing tax decreases
     uint256 public lastUpdatedTaxTimestamp; // Timestamp of the last tax update
 
-    // // // // PancakeSwap router address
-    // IPancakeRouter02 public pancakeRouter;
-    // address public pancakePair;
-
-    // // Flag to enable/disable auto liquidity
-    // bool public autoLiquidityEnabled = true;
-
-    // // Whitelist to exclude addresses from sale tax
-    // mapping(address => bool) public isExcludedFromTax;
-
-    // // Tax rates for different transaction limits
-    // uint256 public lowLimitTaxRate = 5; // 5% tax for transactions below low limit
-    // uint256 public highLimitTaxRate = 10; // 10% tax for transactions above low limit
-
-    // // Limits for different tax rates
-    // uint256 public lowLimit = 1000 ether;
-    // uint256 public highLimit = 5000 ether;
-
+    // // PancakeSwap router address
+    IPancakeRouter02 public pancakeRouter;
+    address public pancakePair;
     struct Vesting {
         uint256 amount;
         address beneficiary;
@@ -67,51 +52,37 @@ contract CGate is ERC20, ERC20Burnable, Ownable, Pausable {
     mapping(address => uint256) private _frozenWallets;
     mapping(address => bool) private _whitelistedWallets;
     mapping(address => bool) public signers;
-    mapping(address => Vesting) private vestingInfo;
+    mapping(address => Vesting) public vestingInfo;
 
     constructor(
         string memory _name,
         string memory _symbol,
         uint8 _decimals,
         uint256 _initialSupply
-    )
-        // address[] memory _initialSigners,
-        // address _usdcLiquidityAddress
-        ERC20(_name, _symbol)
-    {
+    ) ERC20(_name, _symbol) {
         _owner = msg.sender;
         _mint(_owner, _initialSupply * (10 ** uint256(_decimals)));
         isBlacklisted[msg.sender] = false;
         _whitelistedWallets[msg.sender] = true;
         _transferAllowedAt[msg.sender] = block.timestamp;
-        lastUpdatedTaxTimestamp = block.timestamp;
-        // IPancakeRouter02 _pancakeRouter = IPancakeRouter02(
-        //     0xD99D1c33F9fC3444f8101754aBC46c52416550D1
-        // );
+        IPancakeRouter02 _pancakeRouter = IPancakeRouter02(
+            0xD99D1c33F9fC3444f8101754aBC46c52416550D1
+        );
 
-        // pancakePair = IPancakeFactory(_pancakeRouter.factory()).createPair(
-        //     address(this),
-        //     _pancakeRouter.WETH()
-        // );
+        pancakePair = IPancakeFactory(_pancakeRouter.factory()).createPair(
+            address(this),
+            _pancakeRouter.WETH()
+        );
 
-        // // set the rest of the contract variables
-        // pancakeRouter = _pancakeRouter;
-
-        // for (uint256 i = 0; i < _initialSigners.length; i++) {
-        //     signers[_initialSigners[i]] = true;
-        // }
+        // set the rest of the contract variables
+        pancakeRouter = _pancakeRouter;
     }
 
-    // modifier onlySigner() {
-    //     require(signers[msg.sender], "Sender is not a signer");
-    //     _;
-    // }
     // Modifier to check if liquidity is locked
     modifier liquidityNotLocked() {
         require(!liquidityLocked, "Liquidity is locked");
         _;
     }
-
     modifier whenNotFrozen(address wallet) {
         require(
             _frozenWallets[wallet] == 0 ||
@@ -125,17 +96,17 @@ contract CGate is ERC20, ERC20Burnable, Ownable, Pausable {
         _mint(account, amount);
     }
 
-    function blackList(address _user) public onlyOwner {
+    function blackList(address _user) external onlyOwner {
         require(!isBlacklisted[_user], "user already blacklisted");
         isBlacklisted[_user] = true;
     }
 
-    function removeFromBlacklist(address _user) public onlyOwner {
-        require(isBlacklisted[_user], "user already whitelisted");
+    function removeFromBlacklist(address _user) external onlyOwner {
+        require(isBlacklisted[_user], "user already blacklisted");
         isBlacklisted[_user] = false;
     }
 
-    function isBlackList(address _user) external view returns (bool) {
+    function isBlackList(address _user) public view returns (bool) {
         return isBlacklisted[_user];
     }
 
@@ -157,18 +128,6 @@ contract CGate is ERC20, ERC20Burnable, Ownable, Pausable {
 
     function unpause() external onlyOwner {
         _unpause();
-    }
-
-    function freezeWallet(
-        address wallet,
-        uint256 freezeDuration
-    ) external onlyOwner {
-        require(wallet != address(0), "Invalid wallet address");
-        _frozenWallets[wallet] = block.timestamp + freezeDuration;
-    }
-
-    function unfreezeWallet(address wallet) external onlyOwner {
-        _frozenWallets[wallet] = 0;
     }
 
     function addToWhitelist(address wallet) external onlyOwner {
@@ -194,51 +153,33 @@ contract CGate is ERC20, ERC20Burnable, Ownable, Pausable {
         deflationRate = _rate;
     }
 
+    function setLiquidtyTax(uint256 _liquidityTax) external {
+        liquidityTax = _liquidityTax;
+    }
+
+    function setBurnableTax(uint256 _burnableTax) external {
+        burnableTax = _burnableTax;
+    }
+
     function isWhitelisted(address user) public view returns (bool) {
         return _whitelistedWallets[user];
     }
 
-    function getVestingInfo(address user) public view returns (Vesting memory) {
-        return vestingInfo[user];
+    function freezeWallet(
+        address wallet,
+        uint256 freezeDuration
+    ) external onlyOwner {
+        require(wallet != address(0), "Invalid wallet address");
+        _frozenWallets[wallet] = block.timestamp + freezeDuration;
     }
 
-    // // Function to set the USDC liquidity address
-    // function setUsdcLiquidityAddress(
-    //     address _usdcLiquidityAddress
-    // ) external onlyOwner {
-    //     usdcLiquidityAddress = _usdcLiquidityAddress;
-    // }
+    function unfreezeWallet(address wallet) external onlyOwner {
+        _frozenWallets[wallet] = 0;
+    }
 
-    // // Function to enable/disable auto liquidity
-    // function toggleAutoLiquidity() external onlyOwner {
-    //     autoLiquidityEnabled = !autoLiquidityEnabled;
-    // }
-
-    // // Function to set the tax rates and limits
-    // function setTaxRatesAndLimits(
-    //     uint256 _lowLimitTaxRate,
-    //     uint256 _highLimitTaxRate,
-    //     uint256 _lowLimit,
-    //     uint256 _highLimit
-    // ) external onlyOwner {
-    //     lowLimitTaxRate = _lowLimitTaxRate;
-    //     highLimitTaxRate = _highLimitTaxRate;
-    //     lowLimit = _lowLimit;
-    //     highLimit = _highLimit;
-    // }
-
-    // // Function to exclude an address from the sale tax
-    // function excludeFromTax(address _address) external onlyOwner {
-    //     isExcludedFromTax[_address] = true;
-    // }
-
-    // // Function to include an address in the sale tax
-    // function includeInTax(address _address) external onlyOwner {
-    //     isExcludedFromTax[_address] = false;
-    // }
-
-    function setDecreasingTaxRate(uint256 _rate) public {
-        decreasingTaxRate = _rate;
+    // Function to enable/disable auto liquidity
+    function toggleAutoLiquidity() external onlyOwner {
+        autoLiquidityEnabled = !autoLiquidityEnabled;
     }
 
     // Function to update the gradually decreasing tax rate
@@ -257,17 +198,14 @@ contract CGate is ERC20, ERC20Burnable, Ownable, Pausable {
         lastUpdatedTaxTimestamp = block.timestamp;
     }
 
+    function setDecreasingTaxRate(uint256 _rate) external {
+        decreasingTaxRate = _rate;
+    }
+
     function transfer(
         address recipient,
         uint256 amount
-    )
-        public
-        virtual
-        override
-        whenNotPaused
-        whenNotFrozen(msg.sender)
-        returns (bool)
-    {
+    ) public override whenNotPaused whenNotFrozen(msg.sender) returns (bool) {
         require(!isBlacklisted[msg.sender], "Sender's wallet is blacklisted");
         require(amount >= minTransactionAmount, "Amount below minimum");
         require(amount <= maxTransactionAmount, "Amount exceeds maximum");
@@ -294,7 +232,7 @@ contract CGate is ERC20, ERC20Burnable, Ownable, Pausable {
         address to,
         uint256 amount
     ) public override whenNotFrozen(from) returns (bool) {
-        require(isBlacklisted[msg.sender], "Sender's wallet is blacklisted");
+        require(!isBlacklisted[msg.sender], "Sender's wallet is blacklisted");
         require(amount >= minTransactionAmount, "Amount below minimum");
         require(amount <= maxTransactionAmount, "Amount exceeds maximum");
         require(
@@ -309,70 +247,74 @@ contract CGate is ERC20, ERC20Burnable, Ownable, Pausable {
     }
 
     // Transfer function with auto liquidity and tax
-    // function _transfer(
-    //     address from,
-    //     address to,
-    //     uint256 amount
-    // ) internal override {
-    //     require(from != address(0), "Transfer from the zero address");
-    //     require(to != address(0), "Transfer to the zero address");
-    //     require(amount > 0, "Transfer amount must be greater than zero");
+    function _transfer(
+        address sender,
+        address recipient,
+        uint256 amount
+    ) internal virtual override {
+        require(sender != address(0), "ERC20: transfer from the zero address");
+        require(recipient != address(0), "ERC20: transfer to the zero address");
+        require(amount > 0, "Transfer amount must be greater than zero");
+        require(
+            amount <= maxTransactionAmount,
+            "Exceeds max transaction amount"
+        );
 
-    //     // Calculate the tax rate based on the transaction amount
-    //     uint256 taxRate = calculateTaxRate(amount);
+        // Apply taxes
+        uint256 taxAmount = 0;
+        if (
+            autoLiquidityEnabled &&
+            pancakePair != address(0) &&
+            sender != pancakePair &&
+            recipient != pancakePair
+        ) {
+            taxAmount = (amount * liquidityTax) / 100;
+            uint256 liquidityAmount = taxAmount / 2;
+            uint256 remainingAmount = amount - taxAmount;
 
-    //     // Calculate the tax amount
-    //     uint256 taxAmount = (amount * taxRate) / 100;
+            // Add liquidity
+            _addLiquidity(liquidityAmount, remainingAmount);
+        }
 
-    //     // Calculate the amount to send after tax
-    //     uint256 amountAfterTax = amount - taxAmount;
+        // Transfer the remaining amount
+        super._transfer(sender, recipient, amount - taxAmount);
+    }
 
-    //     // Deduct the tax from the sender
-    //     super._transfer(from, address(this), taxAmount);
+    // Function to add liquidity
+    function _addLiquidity(uint256 tokenAmount, uint256 bnbAmount) internal {
+        require(
+            tokenAmount > 0 && bnbAmount > 0,
+            "Insufficient liquidity amounts"
+        );
 
-    //     if (autoLiquidityEnabled && from != usdcLiquidityAddress) {
-    //         // Add liquidity to PancakeSwap
-    //         addLiquidity(taxAmount, amountAfterTax);
-    //     }
+        // Approve the PancakeSwap router to spend your tokens
+        _approve(address(this), address(pancakeRouter), tokenAmount);
 
-    //     // Transfer the remaining amount to the recipient
-    //     super._transfer(from, to, amountAfterTax);
-    // }
+        // Swap half of the collected BNB for your native tokens
+        address[] memory path = new address[](2);
+        path[0] = pancakeRouter.WETH(); // BNB
+        path[1] = address(this); // Your native token
 
-    // // Calculate the tax rate based on the transaction amount
-    // function calculateTaxRate(uint256 amount) internal view returns (uint256) {
-    //     if (isExcludedFromTax[msg.sender] || msg.sender == owner()) {
-    //         return 0; // No tax for excluded addresses or owner
-    //     } else if (amount >= highLimit) {
-    //         return highLimitTaxRate;
-    //     } else if (amount >= lowLimit) {
-    //         return lowLimitTaxRate;
-    //     } else {
-    //         return 0; // No tax if below low limit
-    //     }
-    // }
+        pancakeRouter.swapExactETHForTokens{value: bnbAmount / 2}(
+            0, // Accept any amount of tokens
+            path,
+            address(this),
+            block.timestamp + 300 // Set an appropriate deadline
+        );
 
-    // // Function to add liquidity
-    // function addLiquidity(uint256 tokenAmount, uint256 bnbAmount) internal {
-    //     // Approve the router to spend tokens
-    //     _approve(address(this), address(pancakeRouter), tokenAmount);
+        // Approve the PancakeSwap router to spend half of your native tokens
+        _approve(address(this), address(pancakeRouter), tokenAmount / 2);
 
-    //     // Add liquidity to the pool
-    //     pancakeRouter.addLiquidityETH{value: bnbAmount}(
-    //         address(this), // Your token address
-    //         tokenAmount, // Amount of your token
-    //         0, // Minimum amount of your token to receive
-    //         0, // Minimum amount of BNB to receive
-    //         _owner, // Address to receive LP tokens
-    //         block.timestamp + 300 // Deadline (5 minutes from now)
-    //     );
-
-    //     // Check if there are any leftover tokens and send them back to the owner
-    //     uint256 remainingTokens = super.balanceOf(address(this));
-    //     if (remainingTokens > 0) {
-    //         super.transfer(_owner, remainingTokens);
-    //     }
-    // }
+        // Add liquidity to the PancakeSwap pool
+        pancakeRouter.addLiquidityETH{value: bnbAmount / 2}(
+            address(this), // Your token
+            tokenAmount / 2,
+            0, // Accept any amount of tokens
+            0, // Accept any amount of BNB
+            _owner,
+            block.timestamp + 300 // Set an appropriate deadline
+        );
+    }
 
     // Function to lock liquidity
     function lockLiquidity(uint256 amount) external liquidityNotLocked {
