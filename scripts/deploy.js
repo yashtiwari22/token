@@ -1,4 +1,4 @@
-const hre = require("hardhat");
+const { ethers, upgrades } = require("hardhat");
 
 async function main() {
   /*
@@ -6,19 +6,14 @@ async function main() {
     so whitelistContract here is a factory for instances of our Whitelist contract.
     */
   // here we deploy the contract
-  const CGate = await hre.ethers.deployContract("CGate", [
-    "CGate",
-    "CG",
-    18,
-    1000,
-  ]);
-  // 10 is the Maximum number of whitelisted addresses allowed
+  const CGate = await ethers.getContractFactory("CGate");
+  const cGate = await upgrades.deployProxy(CGate, ["CGate", "CG", 18, 1000]);
 
   // wait for the contract to deploy
-  await CGate.waitForDeployment();
+  await cGate.waitForDeployment();
 
   // print the address of the deployed contract
-  console.log("CGate Contract Address:", CGate.target);
+  console.log("CGate Contract Address:", await cGate.getAddress());
 }
 
 // Call the main function and catch if there is any error

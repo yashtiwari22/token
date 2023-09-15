@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.7;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
@@ -61,7 +61,7 @@ contract Staking is ReentrancyGuard {
     }
 
     constructor(
-        address stakingToken,
+        address payable stakingToken,
         address rewardToken,
         uint256 planDuration
     ) {

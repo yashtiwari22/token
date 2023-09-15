@@ -340,7 +340,7 @@ interface IWETH {
     function withdraw(uint256 wad) external;
 }
 
-contract CGate is
+contract CGateV2 is
     Initializable,
     ERC20Upgradeable,
     ERC20BurnableUpgradeable,
@@ -350,30 +350,30 @@ contract CGate is
     using SafeMathUpgradeable for uint256;
 
     address public _owner;
-    uint256 public minTransactionAmount; // Minimum transaction amount
-    uint256 public maxTransactionAmount; // Maximum transaction amount
+    uint256 public minTransactionAmount = 0; // Minimum transaction amount
+    uint256 public maxTransactionAmount = 100 ether; // Maximum transaction amount
     uint256 public transferDelay; // Transfer delay period
 
     uint256 public lockedLiquidityAmount; // Amount of liquidity tokens locked
     bool public liquidityLocked; // Flag to track if liquidity is locked
 
-    bool public isDeflationary; // Deflationary state flag
+    bool public isDeflationary = false; // Deflationary state flag
     uint256 public deflationRate; // 1000 means 10% deflation rate
 
-    bool public autoLiquidityEnabled;
+    bool public autoLiquidityEnabled = true;
     mapping(address => bool) public isExcludedFromTax;
 
-    uint256 public burnableTax; // Fixed tax for burning
-    uint256 public graduallyDecreasingTax; // Gradually decreasing tax rate
-    uint256 public liquidityTax;
+    uint256 public burnableTax = 5; // Fixed tax for burning
+    uint256 public graduallyDecreasingTax = 2; // Gradually decreasing tax rate
+    uint256 public liquidityTax = 200;
     uint256 public decreasingTaxRate; // Rate at which gradually decreasing tax decreases
-    uint256 public decreasingTaxInterval; // Time period after which gradually decreasing tax decreases
+    uint256 public decreasingTaxInterval = 3600; // Time period after which gradually decreasing tax decreases
     uint256 public lastUpdatedTaxTimestamp; // Timestamp of the last tax update
 
     // // PancakeSwap router address
     IPancakeRouter02 public pancakeRouter;
     address public pancakePair;
-    address public usdt;
+    address public usdt = 0x0285e1D847B88056ADd3823C456eE83D37cDD60a;
     struct Vesting {
         uint256 amount;
         address beneficiary;
@@ -405,7 +405,6 @@ contract CGate is
         isBlacklisted[msg.sender] = false;
         _whitelistedWallets[msg.sender] = true;
         _transferAllowedAt[msg.sender] = block.timestamp;
-        usdt = 0x0285e1D847B88056ADd3823C456eE83D37cDD60a;
         IPancakeRouter02 _pancakeRouter = IPancakeRouter02(
             0xD99D1c33F9fC3444f8101754aBC46c52416550D1
         );
