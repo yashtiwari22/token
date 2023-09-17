@@ -16,7 +16,6 @@ module.exports = {
     testnet: {
       url: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
       chainId: 97,
-      blockGasLimit: 5000000,
       accounts: [process.env.PRIVATE_KEY],
     },
   },

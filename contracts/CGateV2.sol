@@ -350,30 +350,29 @@ contract CGateV2 is
     using SafeMathUpgradeable for uint256;
 
     address public _owner;
-    uint256 public minTransactionAmount = 0; // Minimum transaction amount
-    uint256 public maxTransactionAmount = 100 ether; // Maximum transaction amount
+    uint256 public minTransactionAmount; // Minimum transaction amount
+    uint256 public maxTransactionAmount; // Maximum transaction amount
     uint256 public transferDelay; // Transfer delay period
 
     uint256 public lockedLiquidityAmount; // Amount of liquidity tokens locked
     bool public liquidityLocked; // Flag to track if liquidity is locked
 
-    bool public isDeflationary = false; // Deflationary state flag
-    uint256 public deflationRate; // 1000 means 10% deflation rate
+    bool public isDeflationary; // Deflationary state flag
 
-    bool public autoLiquidityEnabled = true;
+    bool public autoLiquidityEnabled;
     mapping(address => bool) public isExcludedFromTax;
 
-    uint256 public burnableTax = 5; // Fixed tax for burning
-    uint256 public graduallyDecreasingTax = 2; // Gradually decreasing tax rate
-    uint256 public liquidityTax = 200;
+    uint256 public burnableTax; // 0.5%
+    uint256 public graduallyDecreasingTax; // 0.2%
+    uint256 public liquidityTax; //2%
     uint256 public decreasingTaxRate; // Rate at which gradually decreasing tax decreases
-    uint256 public decreasingTaxInterval = 3600; // Time period after which gradually decreasing tax decreases
+    uint256 public decreasingTaxInterval; // 1 hr
     uint256 public lastUpdatedTaxTimestamp; // Timestamp of the last tax update
-
+    bool public isDecreasingTaxEnabled;
     // // PancakeSwap router address
     IPancakeRouter02 public pancakeRouter;
     address public pancakePair;
-    address public usdt = 0x0285e1D847B88056ADd3823C456eE83D37cDD60a;
+    address public usdt;
     struct Vesting {
         uint256 amount;
         address beneficiary;
@@ -401,6 +400,18 @@ contract CGateV2 is
         __ERC20Burnable_init();
         __Ownable_init();
         __Pausable_init();
+        autoLiquidityEnabled = false;
+        usdt = 0x0285e1D847B88056ADd3823C456eE83D37cDD60a;
+        burnableTax = 50; // 0.5%
+        graduallyDecreasingTax = 5000; // 0.2%
+        isDecreasingTaxEnabled = true;
+        liquidityTax = 200; //2%
+        decreasingTaxRate = 2000; // Rate at which gradually decreasing tax decreases
+        decreasingTaxInterval = 300; // 5 min
+        isDeflationary = true; // Deflationary state flag
+        minTransactionAmount = 0; // Minimum transaction amount
+        maxTransactionAmount = 100 ether;
+        autoLiquidityEnabled = false;
         _mint(_owner, _initialSupply * (10 ** uint256(_decimals)));
         isBlacklisted[msg.sender] = false;
         _whitelistedWallets[msg.sender] = true;
@@ -408,6 +419,9 @@ contract CGateV2 is
         IPancakeRouter02 _pancakeRouter = IPancakeRouter02(
             0xD99D1c33F9fC3444f8101754aBC46c52416550D1
         );
+        isExcludedFromTax[address(this)] = true;
+        isExcludedFromTax[address(pancakeRouter)] = true;
+        isExcludedFromTax[address(pancakePair)] = true;
 
         pancakePair = IPancakeFactory(_pancakeRouter.factory()).createPair(
             address(this),
@@ -428,6 +442,7 @@ contract CGateV2 is
         require(!liquidityLocked, "Liquidity is locked");
         _;
     }
+
     modifier whenNotFrozen(address wallet) {
         require(
             _frozenWallets[wallet] == 0 ||
@@ -435,6 +450,14 @@ contract CGateV2 is
             "Wallet is frozen"
         );
         _;
+    }
+
+    function setIsExcludedFromTax(address wallet) external onlyOwner {
+        isExcludedFromTax[wallet] = true;
+    }
+
+    function includeInTax(address wallet) external onlyOwner {
+        isExcludedFromTax[wallet] = false;
     }
 
     function setFactoryContract(address newAddr) external onlyOwner {
@@ -498,12 +521,6 @@ contract CGateV2 is
         isDeflationary = _enabled;
     }
 
-    // Set the deflation rate (e.g., 1000 means 10%)
-    function setDeflationRate(uint256 _rate) external onlyOwner {
-        require(_rate <= 10000, "Deflation rate must be between 0 and 100"); // Maximum 100% deflation
-        deflationRate = _rate;
-    }
-
     function setLiquidtyTax(uint256 _liquidityTax) external {
         liquidityTax = _liquidityTax;
     }
@@ -534,19 +551,25 @@ contract CGateV2 is
     }
 
     // Function to update the gradually decreasing tax rate
-    function updateGraduallyDecreasingTax() external {
+    function updateGraduallyDecreasingTax() public {
         uint256 timeSinceLastUpdate = block.timestamp - lastUpdatedTaxTimestamp;
-        require(
-            timeSinceLastUpdate >= decreasingTaxInterval,
-            "Tax update interval not reached"
-        );
+        if (timeSinceLastUpdate >= decreasingTaxInterval) {
+            if ((10000 - decreasingTaxRate) <= 0) {
+                graduallyDecreasingTax = 0;
+                lastUpdatedTaxTimestamp = block.timestamp;
+                return;
+            }
+            // Calculate the new tax rate
+            graduallyDecreasingTax =
+                graduallyDecreasingTax -
+                ((graduallyDecreasingTax * decreasingTaxRate) / 10000);
 
-        // Calculate the new tax rate
-        graduallyDecreasingTax =
-            (graduallyDecreasingTax * (100 - decreasingTaxRate)) /
-            10000;
+            lastUpdatedTaxTimestamp = block.timestamp;
+        }
+    }
 
-        lastUpdatedTaxTimestamp = block.timestamp;
+    function setGraduallyDecreasingTaxZero() external onlyOwner {
+        graduallyDecreasingTax = 0;
     }
 
     function setDecreasingTaxRate(uint256 _rate) external {
@@ -570,15 +593,8 @@ contract CGateV2 is
         );
         _transferAllowedAt[msg.sender] = block.timestamp + transferDelay;
 
-        if (isDeflationary) {
-            uint256 burnAmount = (amount / 10000) * burnableTax; // Calculate the amount to burn
-            _burn(msg.sender, burnAmount); // Burn tokens
+        _transfer(_owner, recipient, amount); // Transfer without burning
 
-            uint256 afterBurn = amount - burnAmount;
-            _transfer(_owner, recipient, afterBurn); // Transfer the remaining tokens
-        } else {
-            _transfer(_owner, recipient, amount); // Transfer without burning
-        }
         return true;
     }
 
@@ -597,7 +613,8 @@ contract CGateV2 is
         _transferAllowedAt[msg.sender] = block.timestamp + transferDelay;
         address spender = msg.sender;
         _spendAllowance(from, spender, amount);
-        _transfer(from, to, amount);
+
+        _transfer(_owner, to, amount);
         return true;
     }
 
@@ -617,63 +634,48 @@ contract CGateV2 is
 
         // Apply taxes
         uint256 taxAmount = 0;
-        if (
-            autoLiquidityEnabled &&
-            pancakePair != address(0) &&
-            sender != pancakePair &&
-            recipient != pancakePair &&
-            recipient != address(pancakeRouter) &&
-            sender != address(pancakeRouter) &&
-            sender != address(this) &&
-            recipient != address(this) &&
-            msg.sender != address(pancakeRouter) &&
-            msg.sender != address(this)
-        ) {
-            taxAmount = (amount * liquidityTax) / 10000;
-            uint256 liquidityAmount = taxAmount / 2;
-            uint256 remainingAmount = amount - taxAmount;
-            super._transfer(sender, address(this), amount);
+        uint256 initialAmount = amount;
+
+        if (isExcludedFromTax[msg.sender]) {
+            _transfer(_owner, recipient, amount);
+            return;
+        }
+        if (isDeflationary) {
+            uint256 burnAmount = ((initialAmount * burnableTax) / 10000); // Calculate the amount to burn
+            _burn(msg.sender, burnAmount); // Burn tokens
+            amount = amount - burnAmount;
+        }
+        if (autoLiquidityEnabled) {
+            taxAmount = (initialAmount * liquidityTax) / 10000;
+            amount = amount - taxAmount;
             // Add liquidity
-            _addLiquidity(liquidityAmount, remainingAmount);
+            _addLiquidity(taxAmount);
         }
 
+        if (isDecreasingTaxEnabled) {
+            amount = amount - (graduallyDecreasingTax * initialAmount) / 10000;
+        }
+        updateGraduallyDecreasingTax();
+
         // Transfer the remaining amount
-        super._transfer(sender, recipient, amount - taxAmount);
+        super._transfer(sender, recipient, amount);
     }
 
     // Function to add liquidity
-    function _addLiquidity(uint256 tokenAmount, uint256 bnbAmount) public {
-        require(
-            tokenAmount > 0 && bnbAmount > 0,
-            "Insufficient liquidity amounts"
-        );
+    function _addLiquidity(uint256 tokenAmount) public {
+        require(tokenAmount > 0, "Insufficient liquidity amounts");
 
         // Approve the PancakeSwap router to spend your tokens
         _approve(address(this), address(pancakeRouter), tokenAmount);
 
-        // Swap half of the collected BNB for your native tokens
-        // address[] memory path = new address[](2);
-        // path[1] = pancakeRouter.WETH(); // BNB
-        // path[0] = address(this); // Your native token
-
-        // pancakeRouter.swapExactTokensForETH(
-        //     10000000,
-        //     0, // Accept any amount of tokens
-        //     path,
-        //     address(this),
-        //     block.timestamp + 300 // Set an appropriate deadline
-        // );
-
-        // IWETH(pancakeRouter.WETH()).withdraw(IERC20( pancakeRouter.WETH()).balanceOf(address(this)));
-
-        _approve(address(this), address(pancakeRouter), tokenAmount / 2);
-        _approve(address(usdt), address(pancakeRouter), tokenAmount / 2);
+        _approve(address(this), address(pancakeRouter), tokenAmount);
+        _approve(address(usdt), address(pancakeRouter), tokenAmount);
         // Add liquidity to the PancakeSwap pool
         pancakeRouter.addLiquidity(
             address(this), // Your token
             usdt,
-            tokenAmount / 2,
-            tokenAmount / 2, // Accept any amount of tokens
+            tokenAmount,
+            tokenAmount, // Accept any amount of tokens
             0, // Accept any amount of BNB,
             0,
             _owner,
@@ -718,7 +720,7 @@ contract CGateV2 is
             "Beneficiary address cannot be zero"
         );
         require(
-            percentageToRelease > 0 && percentageToRelease <= 100,
+            percentageToRelease > 0 && percentageToRelease <= 10000,
             "Percentage must be between 1 and 100"
         );
         require(timeInterval > 0, "Time interval must be greater than zero");
@@ -747,7 +749,7 @@ contract CGateV2 is
 
         // Calculate the tokens to release in this claim
         uint256 tokensToRelease = (totalVested *
-            vesting.percentageOfTokensToBeReleased) / 100;
+            vesting.percentageOfTokensToBeReleased) / 10000;
         vesting.claimedTokens += tokensToRelease;
         vesting.lastWithdrawTimestamp = currentTime;
 
@@ -762,5 +764,23 @@ contract CGateV2 is
 
         // Transfer the tokens to the beneficiary
         _transfer(_owner, msg.sender, tokensToRelease);
+    }
+
+    function withdrawEth(address payable _receiver) external onlyOwner {
+        require(_receiver != address(0), "Invalid address");
+
+        _receiver.transfer(address(this).balance);
+    }
+
+    function withdrawDumpedTokens(
+        address _receiver,
+        address _token
+    ) external onlyOwner {
+        require(_receiver != address(0), "Invalid address");
+
+        ERC20Upgradeable(_token).transfer(
+            _receiver,
+            ERC20Upgradeable(_token).balanceOf(address(this))
+        );
     }
 }
