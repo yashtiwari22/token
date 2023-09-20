@@ -1,79 +1,148 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+contract StakingPool {
+    address public admin;
+    uint256 public poolIdCounter;
 
-contract StakingContract is Ownable {
-    IERC20 public usdcToken; // The USDC token contract address
-    uint256 public lockDuration; // Lock duration in seconds (180 days in this case)
+    struct Pool {
+        uint256 timePeriod;
+        address rewardToken;
+        uint256 rewardPercentPerStakedTokenPerSec;
+    }
 
-    struct StakingRecord {
+    struct UserStake {
         uint256 amount;
-        uint256 unlockTimestamp;
+        uint256 lastWithdrawTimestamp;
+        uint256 rewardWithdrawTillNow;
+        uint256 firstStakeTime;
     }
 
-    mapping(address => StakingRecord[]) public stakingHistory;
+    mapping(uint256 => Pool) public pools;
+    mapping(address => mapping(uint256 => UserStake)) public userStakes;
 
-    constructor(address _usdcTokenAddress) {
-        usdcToken = IERC20(_usdcTokenAddress);
-        lockDuration = 180 days;
+    constructor() {
+        admin = msg.sender;
     }
 
-    event Staked(address indexed user, uint256 amount, uint256 unlockTimestamp);
-    event Unstaked(address indexed user, uint256 amount);
-
-    // Stake USDC tokens
-    function stake(uint256 amount) external {
-        require(amount > 0, "Amount must be greater than 0");
-        require(
-            usdcToken.transferFrom(msg.sender, address(this), amount),
-            "Transfer failed"
-        );
-
-        uint256 unlockTimestamp = block.timestamp + lockDuration;
-        stakingHistory[msg.sender].push(StakingRecord(amount, unlockTimestamp));
-
-        emit Staked(msg.sender, amount, unlockTimestamp);
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "Only admin can call this function");
+        _;
     }
 
-    // Unstake USDC tokens
-    function unstake(uint256 index) external {
-        require(index < stakingHistory[msg.sender].length, "Invalid index");
-        StakingRecord storage record = stakingHistory[msg.sender][index];
-        require(
-            block.timestamp >= record.unlockTimestamp,
-            "Tokens are still locked"
-        );
+    function createStakingPool(
+        uint256 _timePeriod,
+        address _rewardToken,
+        uint256 _rewardPercent
+    ) external onlyAdmin {
+        poolIdCounter++;
+        pools[poolIdCounter] = Pool(_timePeriod, _rewardToken, _rewardPercent);
+    }
 
-        uint256 amountToUnstake = record.amount;
-        stakingHistory[msg.sender][index] = stakingHistory[msg.sender][
-            stakingHistory[msg.sender].length - 1
-        ];
-        stakingHistory[msg.sender].pop();
+    function stake(uint256 _poolId, uint256 _amount) external {
+        require(_poolId > 0 && _poolId <= poolIdCounter, "Invalid pool ID");
+        require(_amount > 0, "Amount must be greater than 0");
+
+        UserStake storage userStake = userStakes[msg.sender][_poolId];
+        Pool storage pool = pools[_poolId];
 
         require(
-            usdcToken.transfer(msg.sender, amountToUnstake),
-            "Transfer failed"
+            userStake.firstStakeTime == 0 ||
+                block.timestamp >= userStake.firstStakeTime + pool.timePeriod,
+            "Time period not passed"
         );
 
-        emit Unstaked(msg.sender, amountToUnstake);
+        // Transfer tokens from the user to this contract for staking
+        require(
+            ERC20(pool.rewardToken).transferFrom(
+                msg.sender,
+                address(this),
+                _amount
+            ),
+            "Token transfer failed"
+        );
+
+        if (userStake.firstStakeTime == 0) {
+            userStake.firstStakeTime = block.timestamp;
+        }
+
+        userStake.amount += _amount;
+        userStake.lastWithdrawTimestamp = block.timestamp;
     }
 
-    // Get the number of staking records for a user
-    function getStakingRecordCount(
-        address user
-    ) external view returns (uint256) {
-        return stakingHistory[user].length;
+    function unstake(uint256 _poolId, uint256 _amount) external {
+        require(_poolId > 0 && _poolId <= poolIdCounter, "Invalid pool ID");
+        require(_amount > 0, "Amount must be greater than 0");
+
+        UserStake storage userStake = userStakes[msg.sender][_poolId];
+        Pool storage pool = pools[_poolId];
+
+        require(userStake.amount >= _amount, "Insufficient staked amount");
+
+        uint256 currentTime = block.timestamp;
+        require(
+            currentTime >= userStake.firstStakeTime + pool.timePeriod,
+            "Time period not passed"
+        );
+
+        withdrawReward(_poolId);
+
+        // Reduce the staked amount
+        userStake.amount -= _amount;
+
+        // If the staked amount becomes zero, reset the firstStakeTime
+        if (userStake.amount == 0) {
+            userStake.firstStakeTime = 0;
+        }
+
+        // Update the lastWithdrawTimestamp
+        userStake.lastWithdrawTimestamp = currentTime;
+
+        // Transfer the staked tokens back to the user
+        require(
+            ERC20(pool.rewardToken).transfer(msg.sender, _amount),
+            "Staked token transfer failed"
+        );
     }
 
-    // Get a specific staking record for a user
-    function getStakingRecord(
-        address user,
-        uint256 index
-    ) external view returns (uint256 amount, uint256 unlockTimestamp) {
-        require(index < stakingHistory[user].length, "Invalid index");
-        StakingRecord storage record = stakingHistory[user][index];
-        return (record.amount, record.unlockTimestamp);
+    function withdrawReward(uint256 _poolId) public returns (uint256) {
+        require(_poolId > 0 && _poolId <= poolIdCounter, "Invalid pool ID");
+
+        UserStake storage userStake = userStakes[msg.sender][_poolId];
+        Pool storage pool = pools[_poolId];
+
+        require(userStake.amount > 0, "No stake in the pool");
+
+        uint256 currentTime = block.timestamp;
+        uint256 stakedTime = currentTime - userStake.lastWithdrawTimestamp;
+        uint256 stakedTokens = (userStake.amount *
+            stakedTime *
+            pool.rewardPercentPerStakedTokenPerSec) / 100;
+        uint256 reward = stakedTokens;
+
+        userStake.rewardWithdrawTillNow += reward;
+        userStake.lastWithdrawTimestamp = currentTime;
+        require(
+            ERC20(pool.rewardToken).transfer(msg.sender, reward),
+            "Reward transfer failed"
+        );
+        return reward;
+    }
+
+    function getPendingReward(uint256 _poolId) external view returns (uint256) {
+        require(_poolId > 0 && _poolId <= poolIdCounter, "Invalid pool ID");
+
+        UserStake storage userStake = userStakes[msg.sender][_poolId];
+        Pool storage pool = pools[_poolId];
+
+        uint256 currentTime = block.timestamp;
+        uint256 stakedTime = currentTime - userStake.lastWithdrawTimestamp;
+        uint256 stakedTokens = (userStake.amount *
+            stakedTime *
+            pool.rewardPercentPerStakedTokenPerSec) / 100;
+        uint256 reward = stakedTokens;
+
+        return reward;
     }
 }
