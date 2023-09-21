@@ -145,4 +145,28 @@ contract StakingPool {
 
         return reward;
     }
+
+    function setRewardToken(
+        uint256 _poolId,
+        address _newRewardToken
+    ) external onlyAdmin {
+        require(_poolId > 0 && _poolId <= poolIdCounter, "Invalid pool ID");
+        pools[_poolId].rewardToken = _newRewardToken;
+    }
+
+    function setRewardPercent(
+        uint256 _poolId,
+        uint256 _newRewardPercent
+    ) external onlyAdmin {
+        require(_poolId > 0 && _poolId <= poolIdCounter, "Invalid pool ID");
+        pools[_poolId].rewardPercentPerStakedTokenPerSec = _newRewardPercent;
+    }
+
+    function setTimePeriod(
+        uint256 _poolId,
+        uint256 _newTimePeriod
+    ) external onlyAdmin {
+        require(_poolId > 0 && _poolId <= poolIdCounter, "Invalid pool ID");
+        pools[_poolId].timePeriod = _newTimePeriod;
+    }
 }
